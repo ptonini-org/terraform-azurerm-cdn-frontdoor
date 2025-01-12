@@ -29,7 +29,7 @@ variable "origin_group" {
       interval_in_seconds = optional(number, 100)
     }), {})
   })
-  default = {}
+  default  = {}
   nullable = false
 }
 
@@ -68,12 +68,13 @@ variable "routes" {
 
 variable "custom_domains" {
   type = map(object({
+    host_name = optional(string)
     dns_zone = object({
-      id = string
+      id   = string
       name = string
     })
     tls = optional(object({
-      certificate_type    = optional(string, "ManagedCertificate")
+      certificate_type = optional(string, "ManagedCertificate")
     }), {})
   }))
   default = {}

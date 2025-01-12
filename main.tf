@@ -7,11 +7,31 @@ resource "azurerm_cdn_frontdoor_profile" "this" {
   name                = var.name
   resource_group_name = var.rg.name
   sku_name            = var.profile_sku_name
+
+  lifecycle {
+    ignore_changes = [
+      tags["business_unit"],
+      tags["environment"],
+      tags["product"],
+      tags["subscription_type"],
+      tags["environment_finops"]
+    ]
+  }
 }
 
 resource "azurerm_cdn_frontdoor_endpoint" "this" {
   name                     = substr("${var.name}${random_id.this.dec}", 0, 24)
   cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.this.id
+
+  lifecycle {
+    ignore_changes = [
+      tags["business_unit"],
+      tags["environment"],
+      tags["product"],
+      tags["subscription_type"],
+      tags["environment_finops"]
+    ]
+  }
 }
 
 resource "azurerm_cdn_frontdoor_origin_group" "this" {
@@ -72,11 +92,11 @@ resource "azurerm_cdn_frontdoor_custom_domain" "this" {
   for_each                 = var.custom_domains
   name                     = substr(replace("${each.key}-${each.value.dns_zone.name}", ".", "-"), 0, 24)
   cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.this.id
-  host_name                = "${each.key}.${each.value.dns_zone.name}"
+  host_name                = each.value.host_name == "@" ? each.value.dns_zone.name : "${coalesce(each.value.host_name, each.key)}.${each.value.dns_zone.name}"
   dns_zone_id              = each.value.dns_zone.id
 
   tls {
-    certificate_type    = each.value.tls.certificate_type
+    certificate_type = each.value.tls.certificate_type
   }
 }
 
@@ -86,12 +106,23 @@ resource "azurerm_cdn_frontdoor_custom_domain_association" "this" {
   cdn_frontdoor_route_ids        = [for k, v in azurerm_cdn_frontdoor_route.this : v.id]
 }
 
+module "apex_record" {
+  source              = "app.terraform.io/ptonini-org/dns-record/azurerm"
+  version             = "~> 1.0.1"
+  for_each            = { for k, v in var.custom_domains : k => v if v.host_name == "@" }
+  resource_group_name = var.rg.name
+  name                = each.value.host_name
+  type                = "a"
+  target_resource_id  = azurerm_cdn_frontdoor_endpoint.this.id
+  zone_name           = each.value.dns_zone.name
+}
+
 module "txt_record" {
   source              = "app.terraform.io/ptonini-org/dns-record/azurerm"
   version             = "~> 1.0.0"
   for_each            = var.custom_domains
   resource_group_name = var.rg.name
-  name                = "_dnsauth.${each.key}"
+  name                = each.value.host_name == "@" ? "_dnsauth" : "_dnsauth.${coalesce(each.value.host_name, each.key)}"
   type                = "txt"
   records             = [azurerm_cdn_frontdoor_custom_domain.this[each.key].validation_token]
   zone_name           = each.value.dns_zone.name
@@ -100,9 +131,9 @@ module "txt_record" {
 module "cname_record" {
   source              = "app.terraform.io/ptonini-org/dns-record/azurerm"
   version             = "~> 1.0.0"
-  for_each            = var.custom_domains
+  for_each            = { for k, v in var.custom_domains : k => v if v.host_name != "@" }
   resource_group_name = var.rg.name
-  name                = each.key
+  name                = coalesce(each.value.host_name, each.key)
   type                = "cname"
   records             = [azurerm_cdn_frontdoor_endpoint.this.host_name]
   zone_name           = each.value.dns_zone.name
